@@ -43,11 +43,7 @@ func dieerr(err error) {
 
 const BUF_SIZE = 256*1024
 
-var windows bool = func() bool {
-    return os.Getenv("WINDIR") != ""
-}()
-
-func hashFile(filename string, algorithm int, portable, binary bool) (result string, err error) {
+func hashFile(filename string, algorithm int) (result string, err error) {
     var f *os.File
     if filename == "-" {
         f = os.Stdin
@@ -67,35 +63,17 @@ func hashFile(filename string, algorithm int, portable, binary bool) (result str
         case 512: h = keccak.New512()
     }
 
-    if binary || portable || !windows { // binary || portable
-        buf := make([]byte, BUF_SIZE)
-        for {
-            n, err2 := f.Read(buf)
-            if err2 != nil {
-                if err2 != io.EOF {
-                    err = err2
-                }
-                break
+    buf := make([]byte, BUF_SIZE)
+    for {
+        n, err2 := f.Read(buf)
+        if err2 != nil {
+            if err2 != io.EOF {
+                err = err2
             }
-            if n > 0 {
-                h.Write(buf[:n])
-            }
+            break
         }
-    } else { // text on windows
-        reader := bufio.NewReader(f)
-        for {
-            line, err2 := reader.ReadString('\n')
-            if err2 != nil {
-                if err2 != io.EOF {
-                    err = err2
-                }
-                break
-            }
-            linelen := len(line)
-            if (line[:linelen] == "\r") {
-                line = line[:linelen-1]
-            }
-            h.Write([]byte(line))
+        if n > 0 {
+            h.Write(buf[:n])
         }
     }
 
@@ -114,7 +92,7 @@ func hashFile(filename string, algorithm int, portable, binary bool) (result str
 var tagRegexp = regexp.MustCompile("^SHA3-([0-9][0-9][0-9]) \\(([^)])\\)[ ]*=[ ]*([0-9A-Fa-f][0-9A-Fa-f]*)$")
 
 // SHA3-XXX (filename) = hex
-func parseTagHash(line string) (hash, fname string, algorithm int, portable, binary bool, err error) {
+func parseTagHash(line string) (hash, fname string, algorithm int, err error) {
     if ! tagRegexp.MatchString(line) {
         err = fmt.Errorf("bad checksum line")
         return
@@ -148,10 +126,10 @@ func parseTagHash(line string) (hash, fname string, algorithm int, portable, bin
     return
 }
 
-var normalRegexp = regexp.MustCompile("^([0-9A-Fa-f][0-9A-Fa-f]*)[ ][ ]*([*?])?(.+)$")
+var normalRegexp = regexp.MustCompile("^([0-9A-Fa-f][0-9A-Fa-f]*)[ ][ ]*(.+)$")
 
 // hex filename
-func parseNormalHash(line string) (hash, fname string, algorithm int, portable, binary bool, err error) {
+func parseNormalHash(line string) (hash, fname string, algorithm int, err error) {
     if ! normalRegexp.MatchString(line) {
         err = fmt.Errorf("bad checksum line")
         return
@@ -169,9 +147,7 @@ func parseNormalHash(line string) (hash, fname string, algorithm int, portable, 
             err = fmt.Errorf("bad hash")
             return
     }
-    portable = (matches[2] == "?")
-    binary = (matches[2] == "*")
-    fname = matches[3]
+    fname = matches[2]
     if len(fname) == 0 {
         err = fmt.Errorf("bad filename")
         return
@@ -179,7 +155,7 @@ func parseNormalHash(line string) (hash, fname string, algorithm int, portable, 
     return
 }
 
-func parseHash(line string, tag bool) (hash, fname string, algorithm int, portable, binary bool, err error) {
+func parseHash(line string, tag bool) (hash, fname string, algorithm int, err error) {
     if tag {
         return parseTagHash(line)
     } else {
@@ -194,7 +170,7 @@ func validAlgorithm(algorithm int) bool {
     }
 }
 
-func readHashes(hashesFilename string, tag, strict bool) (hashes, filenames []string, algorithms []int, portables, binaries []bool) {
+func readHashes(hashesFilename string, tag, strict bool) (hashes, filenames []string, algorithms []int) {
     f, err := os.Open(hashesFilename)
     if err != nil {
         dieerr(err)
@@ -214,28 +190,26 @@ func readHashes(hashesFilename string, tag, strict bool) (hashes, filenames []st
 
         line += string(part)
         if ! prefix {
-            hash, fname, algorithm, portable, binary, err := parseHash(line, tag)
+            hash, fname, algorithm, err := parseHash(line, tag)
             if err != nil && strict {
                 dieerr(err)
             }
             hashes = append(hashes, hash)
             filenames = append(filenames, fname)
             algorithms = append(algorithms, algorithm)
-            portables = append(portables, portable)
-            binaries = append(binaries, binary)
             line = ""
         }
     }
     return
 }
 
-func hashFiles(files []string, algorithm int, portable, binary, tag bool) (err error) {
+func hashFiles(files []string, algorithm int, tag bool) (err error) {
     if len(files) == 0 {
         err = fmt.Errorf("missing files to check")
         return
     }
     for _, filename := range files {
-        hash, err2 := hashFile(filename, algorithm, portable, binary)
+        hash, err2 := hashFile(filename, algorithm)
         if err2 != nil {
             err = err2
             continue
@@ -243,26 +217,20 @@ func hashFiles(files []string, algorithm int, portable, binary, tag bool) (err e
         if tag{
             fmt.Printf("SHA3-%d (%s) = %s\n", algorithm, filename, hash)
         } else {
-            fmt.Printf("%s  ", hash)
-            if portable {
-                fmt.Print("?")
-            } else if binary {
-                fmt.Print("*")
-            }
-            fmt.Println(filename)
+            fmt.Printf("%s  %s\n", hash, filename)
         }
     }
     return
 }
 
-func checkFiles(checkFilename string, binaryFlag, portableFlag, tagFlag, strictFlag, statusFlag bool) error {
+func checkFiles(checkFilename string, tagFlag, strictFlag, statusFlag bool) error {
     fmt.Println("checking ", checkFilename)
     bad := 0
     good := 0
-    expectedHexHashes, filenames, algorithms, portables, binaries := readHashes(checkFilename, tagFlag, strictFlag)
+    expectedHexHashes, filenames, algorithms := readHashes(checkFilename, tagFlag, strictFlag)
     fmt.Println("checking files" , filenames)
     for i, filename := range filenames {
-        actualHashHex, err := hashFile(filename, algorithms[i], portableFlag || portables[i], binaryFlag || binaries[i])
+        actualHashHex, err := hashFile(filename, algorithms[i])
         if err != nil {
             if strictFlag {
                 return err
@@ -309,10 +277,7 @@ func main() {
     goopt.Summary = "Print or check SHA3 checksums"
 
     algorithm := goopt.Int([]string{"-a", "--algorithm"}, 256, "224, 256 (default), 384, 512")
-    binary    := goopt.Flag([]string{"-b", "--binary"},  []string{}, "read files in binary mode (default on DOS/Windows)", "")
     check     := goopt.String([]string{"-c", "--check"}, "", "check SHA3 sums against given list")
-    portable  := goopt.Flag([]string{"-p", "--portable"}, []string{}, "read files in portable mode (same digest on Windows/Unix/Mac)", "")
-    text      := goopt.Flag([]string{"-t", "--text"}, []string{}, "read files in text mode (default)", "")
 
     tag       := goopt.Flag([]string{"--tag"}, []string{}, "create a BSD-style checksum", "")
 
@@ -331,11 +296,6 @@ func main() {
         die("bad algorithm")
     }
 
-
-    binaryFlag := (binary != nil && *binary)
-    portableFlag := (portable != nil && *portable)
-    textFlag := (text != nil && *text)
-
     tagFlag := (tag != nil && *tag)
 
     statusFlag := (status != nil && *status)
@@ -343,10 +303,6 @@ func main() {
     strictFlag := (strict != nil && *strict)
 
     versionFlag := (version != nil && *version)
-
-    if textFlag && binaryFlag {
-        die("cannot specify both text and binary")
-    }
 
     if (check == nil && *check != "") && (statusFlag || quietFlag || strictFlag) {
         die("silent, warn, strict and/or quiet can only be used with check")
@@ -366,10 +322,10 @@ func main() {
 
     var err error
     if *check == "" {
-        err = hashFiles(files, *algorithm, portableFlag, binaryFlag, tagFlag)
+        err = hashFiles(files, *algorithm, tagFlag)
     } else {
         checkFilename := *check
-        err = checkFiles(checkFilename, binaryFlag, portableFlag, tagFlag, strictFlag, statusFlag)
+        err = checkFiles(checkFilename, tagFlag, strictFlag, statusFlag)
     }
     if err != nil {
         os.Exit(1)
