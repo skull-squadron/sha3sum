@@ -231,31 +231,20 @@ func checkFiles(checkFilename string, tagFlag, strictFlag, statusFlag bool) erro
     fmt.Println("checking files" , filenames)
     for i, filename := range filenames {
         actualHashHex, err := hashFile(filename, algorithms[i])
-        if err != nil {
-            if strictFlag {
-                return err
-            } else {
-                continue
-            }
+        if err != nil && strictFlag {
+            return err
         }
 
-        actualHash, err := hex.DecodeString(actualHashHex)
-        if err != nil {
-            if strictFlag {
-                return err
-            } else {
-                continue
-            }
+        actualHash, err2 := hex.DecodeString(actualHashHex)
+        if err2 != nil && strictFlag {
+            return err2
         }
-        expectedHash, err := hex.DecodeString(expectedHexHashes[i])
-        if err != nil {
-            if strictFlag {
-                return err
-            } else {
-                continue
-            }
+
+        expectedHash, err3 := hex.DecodeString(expectedHexHashes[i])
+        if err3 != nil && strictFlag {
+            return err3
         }
-        if securecompare.Equal(actualHash, expectedHash) {
+        if err == nil && err2 == nil && err3 == nil && securecompare.Equal(actualHash, expectedHash) {
             if ! statusFlag {
                 fmt.Printf("%s: OK\n", filename)
             }
