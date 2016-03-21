@@ -1,87 +1,5 @@
 package main
 
-// #include "KeccakNISTInterface.h"
-import "C"
-import (
-	"bufio"
-	"encoding/hex"
-	"errors"
-	"fmt"
-	"github.com/droundy/goopt"
-	"github.com/steakknife/securecompare"
-	"hash"
-	"io"
-	"os"
-	"regexp"
-	"strconv"
-	"unsafe"
-)
-
-type sha3sum struct {
-	hashState  C.hashState
-	bitlen     C.int
-	dataLength C.DataLength
-}
-
-func newSha3sum(bitlen int) hash.Hash {
-	k := &sha3sum{bitlen: C.int(bitlen)}
-	k.Reset()
-	return k
-}
-
-func New224() hash.Hash {
-	return newSha3sum(224)
-}
-
-func New256() hash.Hash {
-	return newSha3sum(256)
-}
-
-func New384() hash.Hash {
-	return newSha3sum(384)
-}
-
-func New512() hash.Hash {
-	return newSha3sum(512)
-}
-
-func (k *sha3sum) Write(b []byte) (int, error) {
-	n := len(b)
-	if n == 0 {
-		return 0, nil
-	}
-	dl := C.DataLength(n * 8)
-	k.dataLength += dl
-	p := (*C.BitSequence)(unsafe.Pointer(&b[0]))
-	if C.Update(&k.hashState, p, dl) != C.SUCCESS {
-		return 0, errors.New("sha3sum write error")
-	}
-	return n, nil
-}
-
-func (k *sha3sum) Sum(b []byte) []byte {
-	k0 := *k
-	buf := make([]byte, k.Size(), k.Size())
-	p := (*C.BitSequence)(unsafe.Pointer(&buf[0]))
-	if C.Final(&k0.hashState, p) != C.SUCCESS {
-		panic("sha3sum sum error")
-	}
-	return append(b, buf...)
-}
-
-func (k *sha3sum) Reset() {
-	k.dataLength = 0
-	C.Init(&k.hashState, k.bitlen)
-}
-
-func (k sha3sum) BlockSize() int {
-	return 200 - 2*k.Size()
-}
-
-func (k sha3sum) Size() int {
-	return int(k.bitlen) / 8
-}
-
 // sha3sum [options] [files...]
 //
 //
@@ -92,13 +10,23 @@ func (k sha3sum) Size() int {
 // -a 384
 // -a 512
 //
-// -b binary (windows default)
-// -t text (default)
-//
 // -c check
 //
 // -s silent
 //
+
+import (
+	"bufio"
+	"encoding/hex"
+	"fmt"
+	"github.com/droundy/goopt"
+	"github.com/steakknife/securecompare"
+	"hash"
+	"io"
+	"os"
+	"regexp"
+	"strconv"
+)
 
 func die(msg string) {
 	fmt.Fprintln(os.Stderr, msg)
